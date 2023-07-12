@@ -1,8 +1,11 @@
 use std::ops::Div;
 
+const CONTRACT_NAME: &str = "eris-update-scaling-factor";
+const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use crate::{
     error::{ContractError, ContractResult, CustomResult},
-    msg::{Config, ExecuteMsg, InstantiateMsg, QueryMsg},
+    msg::{Config, ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg},
     state::CONFIG,
 };
 #[cfg(not(feature = "library"))]
@@ -11,6 +14,7 @@ use cosmwasm_std::{
     to_binary, Binary, Deps, DepsMut, Env, Fraction, MessageInfo, Response, StdResult, Storage,
     Uint128,
 };
+use cw2::set_contract_version;
 use cw_ownable::{get_ownership, update_ownership};
 use eris::hub::{QueryMsg as HubQueryMsg, StateResponse};
 
@@ -21,6 +25,8 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: InstantiateMsg,
 ) -> StdResult<Response> {
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
     cw_ownable::initialize_owner(deps.storage, deps.api, Some(&msg.owner))?;
     CONFIG.save(
         deps.storage,
@@ -125,6 +131,15 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
 
 fn get_config(store: &dyn Storage) -> StdResult<Config> {
     CONFIG.load(store)
+}
+
+#[entry_point]
+pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+    Ok(Response::new()
+        .add_attribute("new_contract_name", CONTRACT_NAME)
+        .add_attribute("new_contract_version", CONTRACT_VERSION))
 }
 
 #[cfg(test)]

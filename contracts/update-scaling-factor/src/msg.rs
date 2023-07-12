@@ -31,6 +31,9 @@ pub enum QueryMsg {
 }
 
 #[cw_serde]
+pub struct MigrateMsg {}
+
+#[cw_serde]
 pub struct Config {
     pub pool_id: u64,
     pub hub: Addr,
