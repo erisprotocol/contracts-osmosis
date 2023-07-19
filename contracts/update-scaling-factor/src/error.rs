@@ -21,4 +21,7 @@ pub enum ContractError {
 
     #[error("not supported")]
     NotSupported,
+
+    #[error("decimals must be less than 18")]
+    DecimalsMustBeLessThan18,
 }

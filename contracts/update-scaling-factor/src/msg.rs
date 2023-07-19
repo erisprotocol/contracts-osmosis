@@ -7,6 +7,7 @@ pub struct InstantiateMsg {
     pub scale_first: bool,
     pub hub: String,
     pub owner: String,
+    pub decimals: u32,
 }
 
 #[cw_serde]
@@ -16,6 +17,7 @@ pub enum ExecuteMsg {
         pool_id: Option<u64>,
         hub: Option<String>,
         scale_first: Option<bool>,
+        decimals: Option<u32>,
     },
     UpdateOwnership(cw_ownable::Action),
 }
@@ -38,4 +40,5 @@ pub struct Config {
     pub pool_id: u64,
     pub hub: Addr,
     pub scale_first: bool,
+    pub decimals: Option<u32>,
 }

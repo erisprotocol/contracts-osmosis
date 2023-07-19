@@ -24,16 +24,22 @@ pub fn instantiate(
     _env: Env,
     _info: MessageInfo,
     msg: InstantiateMsg,
-) -> StdResult<Response> {
+) -> ContractResult {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     cw_ownable::initialize_owner(deps.storage, deps.api, Some(&msg.owner))?;
+
+    if msg.decimals > 17 {
+        return Err(ContractError::DecimalsMustBeLessThan18);
+    }
+
     CONFIG.save(
         deps.storage,
         &Config {
             pool_id: msg.pool_id,
             hub: deps.api.addr_validate(&msg.hub)?,
             scale_first: msg.scale_first,
+            decimals: Some(msg.decimals),
         },
     )?;
     Ok(Response::default())
@@ -60,9 +66,17 @@ fn update_scaling_factor(deps: DepsMut, env: Env, _info: MessageInfo) -> Contrac
     let exchange_rate = state.exchange_rate;
 
     let scaling_factors = if config.scale_first {
-        get_factors(exchange_rate.numerator(), exchange_rate.denominator())?
+        get_factors(
+            exchange_rate.numerator(),
+            exchange_rate.denominator(),
+            config.decimals,
+        )?
     } else {
-        get_factors(exchange_rate.denominator(), exchange_rate.numerator())?
+        get_factors(
+            exchange_rate.denominator(),
+            exchange_rate.numerator(),
+            config.decimals,
+        )?
     };
 
     let factors = scaling_factors
@@ -83,10 +97,18 @@ fn update_scaling_factor(deps: DepsMut, env: Env, _info: MessageInfo) -> Contrac
         .add_message(msg))
 }
 
-fn get_factors(numerator: Uint128, denominator: Uint128) -> CustomResult<Vec<u64>> {
+fn get_factors(
+    numerator: Uint128,
+    denominator: Uint128,
+    decimals: Option<u32>,
+) -> CustomResult<Vec<u64>> {
+    let decimals = decimals.unwrap_or(4);
+    let removing = 18 - decimals;
+    let divisor = 10u128.pow(removing);
+
     // 10^9 -> 9 numbers after the comma
-    let first = numerator.u128().div(1000000000);
-    let second = denominator.u128().div(1000000000);
+    let first: u128 = numerator.u128().div(divisor);
+    let second: u128 = denominator.u128().div(divisor);
 
     Ok(vec![u64::try_from(first)?, u64::try_from(second)?])
 }
@@ -97,10 +119,11 @@ fn update_config(deps: DepsMut, _env: Env, info: MessageInfo, msg: ExecuteMsg) -
             pool_id: pool,
             hub,
             scale_first,
+            decimals,
         } => {
             cw_ownable::assert_owner(deps.storage, &info.sender)?;
 
-            CONFIG.update(deps.storage, |mut config| -> StdResult<Config> {
+            CONFIG.update(deps.storage, |mut config| -> CustomResult<Config> {
                 if let Some(pool) = pool {
                     config.pool_id = pool
                 };
@@ -110,6 +133,13 @@ fn update_config(deps: DepsMut, _env: Env, info: MessageInfo, msg: ExecuteMsg) -
 
                 if let Some(hub) = hub {
                     config.hub = deps.api.addr_validate(hub.as_str())?;
+                };
+
+                if let Some(decimals) = decimals {
+                    if decimals > 17 {
+                        return Err(ContractError::DecimalsMustBeLessThan18);
+                    }
+                    config.decimals = Some(decimals);
                 };
 
                 Ok(config)
@@ -133,7 +163,7 @@ fn get_config(store: &dyn Storage) -> StdResult<Config> {
     CONFIG.load(store)
 }
 
-#[entry_point]
+#[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> ContractResult {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
@@ -151,20 +181,52 @@ mod tests {
     #[test]
     fn test_scaling_factors() {
         let exchange_rate = Decimal::from_str("1.19234").unwrap();
-        let factors = get_factors(exchange_rate.numerator(), exchange_rate.denominator())
-            .expect("should be set");
+        let factors = get_factors(
+            exchange_rate.numerator(),
+            exchange_rate.denominator(),
+            Some(9),
+        )
+        .expect("should be set");
         assert_eq!(factors, vec![1192340000, 1000000000]);
 
         // cutoff after 9th position
         let exchange_rate = Decimal::from_str("1.192342342456").unwrap();
-        let factors = get_factors(exchange_rate.numerator(), exchange_rate.denominator())
-            .expect("should be set");
+        let factors = get_factors(
+            exchange_rate.numerator(),
+            exchange_rate.denominator(),
+            Some(9),
+        )
+        .expect("should be set");
         assert_eq!(factors, vec![1192342342, 1000000000]);
+
+        // cutoff after 9th position
+        let exchange_rate = Decimal::from_str("1.192342342456").unwrap();
+        let factors = get_factors(
+            exchange_rate.numerator(),
+            exchange_rate.denominator(),
+            Some(2),
+        )
+        .expect("should be set");
+        assert_eq!(factors, vec![119, 100]);
+
+        // cutoff after 9th position
+        let exchange_rate = Decimal::from_str("1.192342342456").unwrap();
+        let factors = get_factors(
+            exchange_rate.numerator(),
+            exchange_rate.denominator(),
+            Some(1),
+        )
+        .expect("should be set");
+        assert_eq!(factors, vec![11, 10]);
 
         // Decimal::MAX too big
         let exchange_rate = Decimal::MAX;
-        let factors = get_factors(exchange_rate.numerator(), exchange_rate.denominator())
-            .expect_err("should be error");
+        let factors = get_factors(
+            exchange_rate.numerator(),
+            exchange_rate.denominator(),
+            Some(9),
+        )
+        .expect_err("should be error");
         assert_eq!(
             factors.to_string(),
             "out of range integral type conversion attempted"
@@ -172,8 +234,12 @@ mod tests {
 
         // max exchange_rate that is supported
         let exchange_rate = Decimal::from_str("18446744073.709551615").unwrap();
-        let factors = get_factors(exchange_rate.numerator(), exchange_rate.denominator())
-            .expect("should be set");
+        let factors = get_factors(
+            exchange_rate.numerator(),
+            exchange_rate.denominator(),
+            Some(9),
+        )
+        .expect("should be set");
         assert_eq!(factors, vec![u64::MAX, 1000000000]);
     }
 }
